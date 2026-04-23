@@ -27,7 +27,9 @@ jobs:
           pip install requests pandas beautifulsoup4 lxml html5lib
 
       - name: 執行採集腳本
-        run: python scraper_00981a.py
+        run: |
+          python scraper_00981a.py
+          python scraper_00992a.py
 
       - name: 提交並推送到 GitHub
         run: |
