@@ -6,15 +6,19 @@ on:
     - cron: '0 9 * * *'
   workflow_dispatch: # 允許手動點擊執行
 
+# 🌸 這裡是關鍵！給予小管家寫入檔案的權限
+permissions:
+  contents: write
+
 jobs:
   scrape:
     runs-on: ubuntu-latest
     steps:
       - name: 檢出代碼
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4 # 順便升級到最新版，解決截圖中的警告
 
       - name: 設定 Python 環境
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5 # 順便升級最新版
         with:
           python-version: '3.10'
 
@@ -30,5 +34,10 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git add .
-          git commit -m "自動更新今日持股資料 - $(date +'%Y-%m-%d')" || exit 0
-          git push
+          # 檢查是否有檔案變更，避免空提交報錯
+          if [ -n "$(git status --porcelain)" ]; then
+            git commit -m "自動更新今日持股資料 - $(date +'%Y-%m-%d')"
+            git push
+          else
+            echo "沒有偵測到資料更新，跳過推送。"
+          fi
