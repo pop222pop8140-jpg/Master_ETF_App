@@ -4,8 +4,8 @@ from datetime import datetime
 
 print("🌸 呼叫小粉！00400A (國泰動能高息) API 專屬小蜜蜂準備出動！")
 
-# 目標 API 網址
-api_url = "https://cwapi.cathaysite.com.tw/api/ETF/GetETFDetailStockList?FundCode=EEA"
+# 目標 API 網址 (小粉乖乖改回主人找到的 EA！)
+api_url = "https://cwapi.cathaysite.com.tw/api/ETF/GetETFDetailStockList?FundCode=EA"
 
 # 偽裝成真人瀏覽器
 headers = {
@@ -20,19 +20,20 @@ try:
     
     # 將回傳的文字轉換成 JSON 字典
     json_data = response.json()
+    
+    # 🕵️‍♀️ 裝上小粉偵錯雷達，印出前 100 個字看看國泰給了什麼
+    print(f"🕵️‍♀️ 小粉密報！國泰 API 回傳的原始資料前 100 個字：\n{str(json_data)[:100]}...")
+    
     data = []
-
     # 根據主人的截圖，國泰的資料是放在 'result' 這個箱子裡面
     stock_list = json_data.get('result', [])
 
     # 開始解析股票清單
     if stock_list and isinstance(stock_list, list):
         for item in stock_list:
-            # 🎯 精準對應國泰的特殊標籤名稱 (注意大小寫與 volumn 拼字)
             stock_code = str(item.get("stockCode", "")).strip()
             stock_name = str(item.get("stockName", "")).strip()
             weight = str(item.get("weights", "")).strip()
-            # 國泰的股數帶有逗號，順手把它清除變成純數字
             shares = str(item.get("volumn", "")).replace(',', '').strip()
 
             if stock_code:  # 確保有抓到股票代號
@@ -52,7 +53,7 @@ try:
         df.to_csv(filename, index=False, encoding='utf-8-sig')
         print(f"✅ 00400A API 採集大成功！資料已平安送達 {filename} 🍯")
     else:
-        print("⚠️ 金庫裡沒有找到資料，請檢查 API 結構！")
+        print("⚠️ 金庫裡還是沒有找到資料，請主人到 GitHub Actions 點擊「scrape」查看上方的小粉密報！")
 
 except Exception as e:
     print(f"❌ 00400A 小蜜蜂撞到牆了：{e}")
