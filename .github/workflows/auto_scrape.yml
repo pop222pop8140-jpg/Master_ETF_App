@@ -26,11 +26,12 @@ jobs:
         run: |
           pip install requests pandas beautifulsoup4 lxml html5lib
 
-      - - name: 執行採集腳本
+      - name: 執行採集腳本
         run: |
           python scraper_00981a.py
           python scraper_00992a.py
           python scraper_00982a.py
+          
       - name: 提交並推送到 GitHub
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
