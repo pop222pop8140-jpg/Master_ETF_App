@@ -67,7 +67,7 @@ def clean_df_columns(df):
     df = df.rename(columns=new_cols)
     if '股票代號' in df.columns:
         df['股票代號'] = df['股票代號'].astype(str).str.strip().str.replace('.0', '', regex=False)
-        df = df[df['股票代號'].str.contains(r'^\d+$', na=False)]
+        df = df[df['股票代號'].str.contains(r'^\d+|_', na=False)]
     if '持股股數_純數字' in df.columns:
         df['持股股數_純數字'] = pd.to_numeric(df['持股股數_純數字'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
     if '__NAV_VALUE' in df.columns:
