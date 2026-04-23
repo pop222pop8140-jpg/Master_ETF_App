@@ -103,8 +103,53 @@ def run_comparison(today_df, prev_filename):
 # ==========================================
 def render_gods_eye():
     st.header("👑 全市場投信籌碼總匯")
-    csv_files = [f for f in os.listdir() if (f.endswith('.csv') or f.endswith('.xlsx')) and not f.startswith('~$')]
-    st.write(f"目前偵測到存檔清單：{sorted(csv_files, reverse=True)}")
+    
+    # 掃描雲端所有持股檔案
+    all_files = [f for f in os.listdir() if (f.endswith('.csv') or f.endswith('.xlsx')) and not f.startswith('~$')]
+    
+    if not all_files:
+        st.info("💡 雲端目前是空的喔！請等待小管家自動採集或手動上傳。")
+        return
+        
+    st.write(f"✅ 系統運作中，目前偵測到 {len(all_files)} 份持股檔案。")
+    st.markdown("---")
+    
+    all_changes = []
+    
+    # 🕵️‍♀️ 去每一檔 ETF 房間裡翻找今天的變動
+    for etf_code in ETF_LIST:
+        fs = [f for f in all_files if f.startswith(f'holdings_{etf_code}_')]
+        fs.sort(reverse=True)
+        
+        today_f = next((f for f in fs if TODAY_STR in f), (fs[0] if fs else None))
+        prev_f = next((f for f in fs if f != today_f), None)
+        
+        # 如果這檔 ETF 有今天跟昨天的檔案，就計算變動
+        if today_f and prev_f:
+            df_today = pd.read_csv(today_f) if today_f.endswith('.csv') else pd.read_excel(today_f)
+            df_change, _, _ = run_comparison(df_today, prev_f)
+            
+            if df_change is not None and not df_change.empty:
+                all_changes.append(df_change[['股票代號', '股票名稱', '增減張數']])
+                
+    # 📊 彙整所有數據，製作神之排行榜
+    if all_changes:
+        master_df = pd.concat(all_changes, ignore_index=True)
+        summary_df = master_df.groupby(['股票代號', '股票名稱'], as_index=False)['增減張數'].sum()
+        summary_df = summary_df[summary_df['增減張數'] != 0] # 濾掉剛好抵銷的
+        
+        top_buys = summary_df[summary_df['增減張數'] > 0].sort_values(by='增減張數', ascending=False)
+        top_sells = summary_df[summary_df['增減張數'] < 0].sort_values(by='增減張數', ascending=True)
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.subheader("🚀 今日主動 ETF 買超總排行")
+            st.dataframe(top_buys, use_container_width=True, hide_index=True)
+        with col2:
+            st.subheader("📉 今日主動 ETF 賣超總排行")
+            st.dataframe(top_sells, use_container_width=True, hide_index=True)
+    else:
+        st.warning("⚠️ 目前雲端各 ETF 的檔案數量不足以計算全市場變動 (需要兩天的資料喔！)。")
 
 def render_etf_mode(etf_code):
     info = ETF_INFO.get(etf_code, {})
