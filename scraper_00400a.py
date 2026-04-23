@@ -2,45 +2,43 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 from datetime import datetime
-import re
 
 print("🌸 呼叫小粉！00400A (國泰動能高息) 專屬小蜜蜂準備出動！")
 
-# 1. 鎖定目標網址 (國泰 00400A 持股權重，國泰內部代碼為 EEA)
+# 鎖定目標網址 (國泰 00400A 持股權重)
 url = "https://www.cathaysite.com.tw/ETF/detail/EEA?tab=etf3"
 
 # 偽裝成真人瀏覽器
 headers = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
     "Accept-Language": "zh-TW,zh;q=0.9,en-US;q=0.8,en;q=0.7",
 }
 
 try:
     # 潛入國泰官網取得網頁代碼
-    response = requests.get(url, headers=headers)
+    response = requests.get(url, headers=headers, timeout=15)
     response.raise_for_status()
     soup = BeautifulSoup(response.text, 'html.parser')
 
     data = []
     nav_value = 0.0
 
-    # --- 🕵️‍♀️ 任務 A：抓取最新預估淨值 (NAV) ---
-    # 國泰的標題叫做「每受益權單位淨資產價值(元)-台幣交易」
-    nav_label = soup.find('div', string=re.compile('每受益權單位淨資產價值'))
-    if nav_label:
-        nav_td = nav_label.find_next_sibling('div', class_=re.compile('td'))
+    # --- 🕵️‍♀️ 任務 A：抓取最新預估淨值 ---
+    nav_div = soup.find(lambda tag: tag.name == "div" and "每受益權單位淨資產價值" in tag.text)
+    if nav_div:
+        nav_td = nav_div.find_next_sibling('div')
         if nav_td:
             nav_text = nav_td.text.replace('TWD', '').replace(',', '').strip()
             nav_value = float(nav_text)
             print(f"💰 成功攔截最新淨值：{nav_value} 元")
 
     # --- 🕵️‍♀️ 任務 B：抓取股票清單 ---
-    # 國泰的表格結構是用 pct-stock-table-tbody 搭配 tr show-for-medium
-    stock_tbody = soup.find('div', class_=re.compile('pct-stock-table-tbody'))
+    stock_tbody = soup.find('div', class_=lambda c: c and 'pct-stock-table-tbody' in c)
     if stock_tbody:
-        rows = stock_tbody.find_all('div', class_=re.compile(r'tr\s+show-for-medium'))
+        # 國泰的表格列是用 tr show-for-medium 這些 class 組成的
+        rows = stock_tbody.find_all('div', class_=lambda c: c and 'tr' in c and 'show-for-medium' in c)
         for row in rows:
-            # 只抓取直屬的 div 欄位 (th 或 td)
             cols = row.find_all('div', recursive=False)
             if len(cols) >= 4:
                 stock_code = cols[0].text.strip()
@@ -56,20 +54,33 @@ try:
                     "__NAV_VALUE": nav_value
                 })
 
-    # --- 🕵️‍♀️ 任務 C：抓取現金餘額 ---
-    cash_label = soup.find('div', string=re.compile('現金'))
-    if cash_label:
-        cash_td = cash_label.find_next_sibling('div', class_=re.compile('td'))
-        if cash_td:
-            cash_text = cash_td.text.replace('TWD', '').replace(',', '').strip()
-            data.append({
-                "股票代號": "_CASH",
-                "股票名稱": "現金",
-                "持股股數_純數字": cash_text,
-                "權重%": "-",
-                "__NAV_VALUE": nav_value
-            })
-            print(f"💵 成功攔截現金子彈：{cash_text} 元")
+    # --- 🕵️‍♀️ 任務 C：抓取現金與保證金 ---
+    for tag in soup.find_all('div', class_=lambda c: c and 'th' in c):
+        text = tag.text.strip()
+        if text == '現金':
+            td = tag.find_next_sibling('div')
+            if td:
+                val_text = td.text.replace('TWD', '').replace(',', '').strip()
+                data.append({
+                    "股票代號": "_CASH",
+                    "股票名稱": "現金",
+                    "持股股數_純數字": val_text,
+                    "權重%": "-",
+                    "__NAV_VALUE": nav_value
+                })
+                print(f"💵 成功攔截現金子彈：{val_text} 元")
+        elif text == '保證金':
+            td = tag.find_next_sibling('div')
+            if td:
+                val_text = td.text.replace('TWD', '').replace(',', '').strip()
+                data.append({
+                    "股票代號": "_GDM",
+                    "股票名稱": "期貨保證金",
+                    "持股股數_純數字": val_text,
+                    "權重%": "-",
+                    "__NAV_VALUE": nav_value
+                })
+                print(f"🛡️ 成功攔截保證金：{val_text} 元")
 
     # --- 💾 任務 D：寫入 CSV 並收工 ---
     if data:
@@ -79,7 +90,7 @@ try:
         df.to_csv(filename, index=False, encoding='utf-8-sig')
         print(f"✅ 00400A 採集大成功！資料已平安送達 {filename} 🍯")
     else:
-        print("⚠️ 哎呀！網頁裡面沒有找到資料，國泰投信可能把資料藏到 API 裡面了！")
+        print("⚠️ 找不到資料，國泰網頁結構可能改變了！")
 
 except Exception as e:
-    print(f"❌ 小蜜蜂撞到牆了：{e}")
+    print(f"❌ 00400A 小蜜蜂撞到牆了：{e}")
