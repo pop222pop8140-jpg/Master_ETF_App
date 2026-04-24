@@ -49,7 +49,7 @@ st.markdown("""
 st.title("🌸 主人的主動式 ETF 雙重監控基地")
 
 # ==========================================
-# 🌸 第三區：【核心邏輯：強健讀取與掃描】
+# 🌸 第三區：【核心邏輯：強健讀取引擎】
 # ==========================================
 def robust_read_file(filename):
     try:
@@ -64,7 +64,7 @@ def clean_df_columns(df):
     df = df.fillna("")
     fund_nav = 0.0
     
-    # 1. 🔍 掃描 Metadata (尋找幾千萬以上的真實資產)
+    # 1. 🔍 掃描 Metadata (元大、復華專用：尋找幾千萬以上的真實資產)
     for i in range(min(len(df), 40)):
         row_list = [str(x).strip() for x in df.iloc[i].values]
         for idx, val in enumerate(row_list):
@@ -100,8 +100,12 @@ def clean_df_columns(df):
         elif any(x in c_clean for x in ['名稱', '商品名稱']): new_cols[col] = '股票名稱'
         elif any(x in c_clean for x in ['股數', '張數', '數量', '持股數', '商品數量']): new_cols[col] = '持股股數_純數字'
         elif any(x in c_clean for x in ['權重', '比例', '商品權重']): new_cols[col] = '權重%'
+        # ✨ 恢復舊版魔法：把表格內的淨資產欄位也找出來！
+        elif any(x in c_clean for x in ['NAV', '淨資產', '基金規模', '價值']): new_cols[col] = '__NAV_VALUE'
     
     df = df.rename(columns=new_cols)
+    
+    # 4. 資料清洗
     if '股票代號' in df.columns:
         df['股票代號'] = df['股票代號'].astype(str).str.strip().str.replace('.0', '', regex=False)
         df = df[df['股票代號'].str.contains(r'^\d+|_|[A-Z]', na=False)]
@@ -110,7 +114,15 @@ def clean_df_columns(df):
     if '權重%' in df.columns:
         df['權重%'] = df['權重%'].astype(str).str.replace('%', '').str.strip()
 
-    df['__NAV_VALUE'] = fund_nav
+    # ✨ 5. 最關鍵的恢復：雙重保險，如果有 Metadata 就用，沒有就從欄位抓！
+    if fund_nav > 0:
+        df['__NAV_VALUE'] = fund_nav
+    elif '__NAV_VALUE' in df.columns:
+        nav_series = pd.to_numeric(df['__NAV_VALUE'].astype(str).str.replace(r'[^\d.]', '', regex=True), errors='coerce').fillna(0)
+        df['__NAV_VALUE'] = nav_series.max()
+    else:
+        df['__NAV_VALUE'] = 0.0
+
     return df
 
 def run_comparison(today_df, prev_filename):
@@ -178,15 +190,12 @@ def render_etf_mode(etf_code):
                 df_change, t_nav, p_nav = run_comparison(df_full, prev_f)
                 st.subheader("💰 基金總資產資金水位監控")
                 c1, c2, c3 = st.columns(3)
-                
-                # ✨ 這裡！小粉幫主人把沒有資金的介面美化了！
-                txt_t = f"{t_nav:,.0f} 元" if t_nav > 0 else "API 未提供"
-                txt_p = f"{p_nav:,.0f} 元" if p_nav > 0 else "API 未提供"
-                with c1: st.metric("今日總資金", txt_t)
-                with c2: st.metric("近期總資金", txt_p)
+                # ✨ 小粉乖乖改回主人最喜歡的格式了！
+                with c1: st.metric("今日總資金", f"{t_nav:,.0f} 元")
+                with c2: st.metric("近期總資金", f"{p_nav:,.0f} 元")
                 with c3:
-                    if t_nav > 0 and p_nav > 0: st.metric("資金水位增減", f"{(t_nav - p_nav):,.0f} 元", delta=(t_nav - p_nav))
-                    else: st.metric("資金水位增減", "無對比資料")
+                    delta = t_nav - p_nav
+                    st.metric("資金水位增減", f"{delta:,.0f} 元", delta_color="normal", delta=f"{delta:,.0f}")
                 
                 if df_change is not None:
                     st.subheader("🔥 今日動開獎")
