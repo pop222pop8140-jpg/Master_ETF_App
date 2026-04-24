@@ -66,38 +66,69 @@ st.markdown("""
 st.title("🌸 主人的主動式 ETF 雙重監控基地")
 
 # ==========================================
-# 🌸 第三區：【核心邏輯】
+# 🌸 第三區：【核心邏輯：深度優化版】
 # ==========================================
 def clean_df_columns(df):
     df = df.fillna("")
-    # 🕵️‍♀️ 智能標題定位：跳過 Excel 前方的公告文字
-    for i in range(min(len(df), 20)):
+    fund_nav = 0.0
+    
+    # 1. 🔍 掃描檔案上方 (前 15 列) 尋找基金總資產 (針對復華 00991A)
+    for i in range(min(len(df), 15)):
+        row_list = [str(x).strip() for x in df.iloc[i].values]
+        for idx, val in enumerate(row_list):
+            if any(k in val for k in ["基金資產淨值", "基金淨資產價值"]):
+                try:
+                    # 拿下一列的同一欄位 (Excel 常見佈局)
+                    raw_val = str(df.iloc[i+1, idx])
+                    val_clean = re.sub(r'[^\d.]', '', raw_val)
+                    if val_clean: fund_nav = float(val_clean)
+                except: pass
+
+    # 2. 🕵️‍♀️ 智能標題定位：尋找持股明細的起點
+    header_idx = -1
+    for i in range(min(len(df), 30)):
         row_values = [str(x).strip() for x in df.iloc[i].values]
         if any(re.search(r'代號|代碼|證券代號', x) for x in row_values):
             df.columns = row_values
-            df = df.iloc[i+1:].reset_index(drop=True)
+            header_idx = i
             break
     
+    if header_idx != -1:
+        df = df.iloc[header_idx+1:].reset_index(drop=True)
+    
+    # 3. 🏷️ 欄位重新對應
     new_cols = {}
     for col in df.columns:
-        c = re.sub(r'[^\w%]', '', str(col)).strip()
-        if any(x in c for x in ['代號', '代碼', '證券代號']): new_cols[col] = '股票代號'
-        elif '名稱' in c: new_cols[col] = '股票名稱'
-        elif any(x in c for x in ['股數', '張數', '數量', '持股數']): new_cols[col] = '持股股數_純數字'
-        elif any(x in c for x in ['權重', '比例']): new_cols[col] = '權重%'
-        elif any(x in c for x in ['NAV', '淨資產', '基金規模', '價值']): new_cols[col] = '__NAV_VALUE'
+        c = str(col).strip()
+        c_clean = re.sub(r'[^\w%]', '', c)
+        if any(x in c_clean for x in ['代號', '代碼', '證券代號']): new_cols[col] = '股票代號'
+        elif '名稱' in c_clean: new_cols[col] = '股票名稱'
+        elif any(x in c_clean for x in ['股數', '張數', '數量', '持股數']): new_cols[col] = '持股股數_純數字'
+        elif any(x in c_clean for x in ['權重', '比例']): new_cols[col] = '權重%'
+        elif any(x in c_clean for x in ['NAV', '淨資產', '基金規模', '價值']): new_cols[col] = '__NAV_VALUE'
     
     df = df.rename(columns=new_cols)
+    
+    # 4. 🧹 清洗資料
     if '股票代號' in df.columns:
         df['股票代號'] = df['股票代號'].astype(str).str.strip().str.replace('.0', '', regex=False)
         df = df[df['股票代號'].str.contains(r'^\d+|_', na=False)]
+    
     if '持股股數_純數字' in df.columns:
-        df['持股股數_純數字'] = pd.to_numeric(df['持股股數_純數字'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
-    if '__NAV_VALUE' in df.columns:
+        df['持股股數_純數字'] = pd.to_numeric(df['持股股數_純數字'].astype(str).str.replace(',', '').str.replace(' ', ''), errors='coerce').fillna(0)
+    
+    if '權重%' in df.columns:
+        df['權重%'] = df['權重%'].astype(str).str.replace('%', '').str.strip()
+
+    # 5. 💰 淨值補全：如果 Metadata 有抓到就填入，否則找欄位
+    if fund_nav > 0:
+        df['__NAV_VALUE'] = fund_nav
+    elif '__NAV_VALUE' in df.columns:
         nav_series = pd.to_numeric(df['__NAV_VALUE'].astype(str).str.replace(r'[^\d.]', '', regex=True), errors='coerce').fillna(0)
         df['__NAV_VALUE'] = nav_series.max()
     else:
         df['__NAV_VALUE'] = 0.0
+
     return df
 
 def run_comparison(today_df, prev_filename):
@@ -144,11 +175,8 @@ def render_manual_upload():
 def render_gods_eye():
     st.header("👑 全市場投信籌碼總匯")
     all_files = [f for f in os.listdir() if (f.endswith('.csv') or f.endswith('.xlsx')) and not f.startswith('~$')]
-    if not all_files:
-        st.info("💡 雲端目前是空的喔！")
-        return
-    st.write(f"✅ 系統運作中，目前偵測到 {len(all_files)} 份持股檔案。")
-    st.markdown("---")
+    if not all_files: return st.info("💡 雲端目前是空的喔！")
+    
     all_changes = []
     for etf_code in ETF_LIST:
         fs = [f for f in all_files if f.startswith(f'holdings_{etf_code}_')]
@@ -162,18 +190,15 @@ def render_gods_eye():
                 if df_change is not None and not df_change.empty:
                     all_changes.append(df_change[['股票代號', '股票名稱', '增減張數']])
             except: pass
+                
     if all_changes:
         master_df = pd.concat(all_changes, ignore_index=True)
         summary_df = master_df.groupby(['股票代號', '股票名稱'], as_index=False)['增減張數'].sum()
         top_buys = summary_df[summary_df['增減張數'] > 0].sort_values(by='增減張數', ascending=False)
         top_sells = summary_df[summary_df['增減張數'] < 0].sort_values(by='增減張數', ascending=True)
-        col1, col2 = st.columns(2)
-        with col1:
-            st.subheader("🚀 今日主動 ETF 買超總排行")
-            st.dataframe(top_buys, use_container_width=True, hide_index=True)
-        with col2:
-            st.subheader("📉 今日主動 ETF 賣超總排行")
-            st.dataframe(top_sells, use_container_width=True, hide_index=True)
+        c1, c2 = st.columns(2)
+        with c1: st.subheader("🚀 買超總排行"); st.dataframe(top_buys, use_container_width=True, hide_index=True)
+        with c2: st.subheader("📉 賣超總排行"); st.dataframe(top_sells, use_container_width=True, hide_index=True)
 
 def render_etf_mode(etf_code):
     info = ETF_INFO.get(etf_code, {})
@@ -196,19 +221,15 @@ def render_etf_mode(etf_code):
                 with c3:
                     delta = t_nav - p_nav
                     st.metric("資金水位增減", f"{delta:,.0f} 元", delta_color="normal", delta=f"{delta:,.0f}")
-                st.markdown("---")
                 if df_change is not None:
                     st.subheader("🔥 今日動開獎")
-                    # ✨ 修正點：這裡要加上指定的顯示欄位過濾
                     st.dataframe(df_change[['股票代號', '股票名稱', '昨張數', '今張數', '增減張數', '權重%']], use_container_width=True, hide_index=True)
 
             st.subheader(f"📋 目前完整持股明細 ({today_f})")
             display_cols = [c for c in ['股票代號', '股票名稱', '持股股數_純數字', '權重%'] if c in df_full.columns]
             st.dataframe(df_full[display_cols], use_container_width=True, hide_index=True)
-        except Exception as e:
-            st.error(f"🌸 小粉報告：解析檔案時發生錯誤：{e}")
-    else:
-        st.warning("⚠️ 雲端尚無資料檔案。")
+        except Exception as e: st.error(f"🌸 小粉報告：發生錯誤：{e}")
+    else: st.warning("⚠️ 雲端尚無資料。")
 
 # ==========================================
 # 🌸 第五區：【導航中心】
