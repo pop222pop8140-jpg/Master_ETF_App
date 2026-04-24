@@ -66,24 +66,18 @@ st.markdown("""
 st.title("🌸 主人的主動式 ETF 雙重監控基地")
 
 # ==========================================
-# 🌸 第三區：【核心邏輯：智能標題偵測】
+# 🌸 第三區：【核心邏輯】
 # ==========================================
 def clean_df_columns(df):
-    # 偵錯用：如果有空值就填補
     df = df.fillna("")
-    
-    # --- 🕵️‍♀️ 智能標題定位 (針對國泰這種前面有廢話的 Excel) ---
-    found_header = False
-    # 掃描前 20 列，尋找包含「代號」或「代碼」的列
+    # 🕵️‍♀️ 智能標題定位：跳過 Excel 前方的公告文字
     for i in range(min(len(df), 20)):
         row_values = [str(x).strip() for x in df.iloc[i].values]
         if any(re.search(r'代號|代碼|證券代號', x) for x in row_values):
             df.columns = row_values
             df = df.iloc[i+1:].reset_index(drop=True)
-            found_header = True
             break
     
-    # 重新對應欄位名稱
     new_cols = {}
     for col in df.columns:
         c = re.sub(r'[^\w%]', '', str(col)).strip()
@@ -94,22 +88,16 @@ def clean_df_columns(df):
         elif any(x in c for x in ['NAV', '淨資產', '基金規模', '價值']): new_cols[col] = '__NAV_VALUE'
     
     df = df.rename(columns=new_cols)
-    
-    # 過濾與清洗資料
     if '股票代號' in df.columns:
         df['股票代號'] = df['股票代號'].astype(str).str.strip().str.replace('.0', '', regex=False)
-        # 只保留純數字或有底線的代號，排除掉掉文字標題
         df = df[df['股票代號'].str.contains(r'^\d+|_', na=False)]
-    
     if '持股股數_純數字' in df.columns:
         df['持股股數_純數字'] = pd.to_numeric(df['持股股數_純數字'].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
-    
     if '__NAV_VALUE' in df.columns:
         nav_series = pd.to_numeric(df['__NAV_VALUE'].astype(str).str.replace(r'[^\d.]', '', regex=True), errors='coerce').fillna(0)
         df['__NAV_VALUE'] = nav_series.max()
     else:
         df['__NAV_VALUE'] = 0.0
-        
     return df
 
 def run_comparison(today_df, prev_filename):
@@ -144,7 +132,6 @@ def render_manual_upload():
         upload_date = st.date_input("2. 選擇這份資料的日期：", datetime.now())
     with col2:
         uploaded_file = st.file_uploader("3. 請選擇 Excel 或 CSV 檔案", type=["xlsx", "csv", "xls"])
-    
     if uploaded_file is not None:
         file_ext = uploaded_file.name.split('.')[-1]
         date_str = upload_date.strftime("%Y%m%d")
@@ -162,7 +149,6 @@ def render_gods_eye():
         return
     st.write(f"✅ 系統運作中，目前偵測到 {len(all_files)} 份持股檔案。")
     st.markdown("---")
-    
     all_changes = []
     for etf_code in ETF_LIST:
         fs = [f for f in all_files if f.startswith(f'holdings_{etf_code}_')]
@@ -176,7 +162,6 @@ def render_gods_eye():
                 if df_change is not None and not df_change.empty:
                     all_changes.append(df_change[['股票代號', '股票名稱', '增減張數']])
             except: pass
-                
     if all_changes:
         master_df = pd.concat(all_changes, ignore_index=True)
         summary_df = master_df.groupby(['股票代號', '股票名稱'], as_index=False)['增減張數'].sum()
@@ -202,10 +187,6 @@ def render_etf_mode(etf_code):
         try:
             df_full = pd.read_csv(today_f) if today_f.endswith('.csv') else pd.read_excel(today_f)
             df_full = clean_df_columns(df_full)
-            
-            # 安全機制：只顯示存在的欄位
-            display_cols = [c for c in ['股票代號', '股票名稱', '持股股數_純數字', '權重%'] if c in df_full.columns]
-            
             if prev_f:
                 df_change, t_nav, p_nav = run_comparison(df_full, prev_f)
                 st.subheader("💰 基金總資產資金水位監控")
@@ -218,12 +199,14 @@ def render_etf_mode(etf_code):
                 st.markdown("---")
                 if df_change is not None:
                     st.subheader("🔥 今日動開獎")
-                    st.dataframe(df_change, use_container_width=True)
+                    # ✨ 修正點：這裡要加上指定的顯示欄位過濾
+                    st.dataframe(df_change[['股票代號', '股票名稱', '昨張數', '今張數', '增減張數', '權重%']], use_container_width=True, hide_index=True)
 
             st.subheader(f"📋 目前完整持股明細 ({today_f})")
-            st.dataframe(df_full[display_cols], use_container_width=True)
+            display_cols = [c for c in ['股票代號', '股票名稱', '持股股數_純數字', '權重%'] if c in df_full.columns]
+            st.dataframe(df_full[display_cols], use_container_width=True, hide_index=True)
         except Exception as e:
-            st.error(f"🌸 小粉報告：解析檔案時發生了一點意外：{e}")
+            st.error(f"🌸 小粉報告：解析檔案時發生錯誤：{e}")
     else:
         st.warning("⚠️ 雲端尚無資料檔案。")
 
