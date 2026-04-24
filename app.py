@@ -33,62 +33,65 @@ st.set_page_config(page_title="🌸 主人的 ETF 監控基地", layout="wide")
 
 st.markdown("""
     <style>
-    /* 全域字體大小強制設定為 20px */
     html, body, [class*="st-"], .stMarkdown, .stText, .stButton, .stSelectbox, .stRadio, .stTable, .stDataFrame, p, li, span, div {
         font-size: 20px !important;
     }
-    /* 側邊欄文字大小 */
-    [data-testid="stSidebar"] * {
-        font-size: 20px !important;
-    }
-    /* 表格內部字體大小 */
+    [data-testid="stSidebar"] * { font-size: 20px !important; }
     .stDataFrame td, .stDataFrame th, [data-testid="stTable"] td, [data-testid="stTable"] th {
         font-size: 20px !important;
     }
-    /* 指標數字與標籤 */
-    [data-testid="stMetricValue"] {
-        font-size: 45px !important;
-        font-weight: bold;
-    }
-    [data-testid="stMetricLabel"] p {
-        font-size: 24px !important;
-    }
-    .capital-box {
-        background-color: #f8f9fa;
-        padding: 20px;
-        border-radius: 10px;
-        border-left: 5px solid #ff69b4;
-        margin-bottom: 20px;
-    }
+    [data-testid="stMetricValue"] { font-size: 45px !important; font-weight: bold; }
+    [data-testid="stMetricLabel"] p { font-size: 24px !important; }
     </style>
 """, unsafe_allow_html=True)
 
 st.title("🌸 主人的主動式 ETF 雙重監控基地")
 
 # ==========================================
-# 🌸 第三區：【核心邏輯：深度優化版】
+# 🌸 第三區：【核心邏輯：強健讀取引擎】
 # ==========================================
+def robust_read_file(filename):
+    """🌸 小粉專屬強健讀取引擎：解決元大等 CSV 格式不一的問題"""
+    try:
+        if filename.endswith('.csv'):
+            # 針對 00990A 的報錯，這裡強制使用 header=None 並預設大數量的 columns
+            # 這樣 Pandas 就不會因為第一行太短而報錯
+            return pd.read_csv(filename, encoding='utf-8-sig', header=None, names=range(25), on_bad_lines='skip')
+        else:
+            return pd.read_excel(filename, header=None, names=range(25))
+    except Exception as e:
+        st.error(f"🌸 讀取檔案失敗：{e}")
+        return pd.DataFrame()
+
 def clean_df_columns(df):
+    if df.empty: return df
     df = df.fillna("")
     fund_nav = 0.0
     
-    # 1. 🔍 掃描檔案上方 (前 15 列) 尋找基金總資產 (針對復華 00991A)
-    for i in range(min(len(df), 15)):
+    # 1. 🔍 掃描檔案上方 (前 30 列) 尋找基金總資產
+    for i in range(min(len(df), 30)):
         row_list = [str(x).strip() for x in df.iloc[i].values]
+        # 針對元大的格式強化：尋找「股票」總金額
         for idx, val in enumerate(row_list):
-            if any(k in val for k in ["基金資產淨值", "基金淨資產價值"]):
+            if any(k in val for k in ["基金資產淨值", "基金淨資產價值", "股票"]):
                 try:
-                    # 拿下一列的同一欄位 (Excel 常見佈局)
-                    raw_val = str(df.iloc[i+1, idx])
-                    val_clean = re.sub(r'[^\d.]', '', raw_val)
-                    if val_clean: fund_nav = float(val_clean)
+                    # 元大的淨值可能在同一列的隔壁，或是下一列
+                    target_val = ""
+                    if idx + 1 < len(row_list) and re.search(r'\d', row_list[idx+1]):
+                        target_val = row_list[idx+1]
+                    elif i + 1 < len(df):
+                        target_val = str(df.iloc[i+1, idx])
+                    
+                    val_clean = re.sub(r'[^\d.]', '', target_val)
+                    if val_clean: fund_nav = max(fund_nav, float(val_clean))
                 except: pass
 
     # 2. 🕵️‍♀️ 智能標題定位：尋找持股明細的起點
     header_idx = -1
-    for i in range(min(len(df), 30)):
+    for i in range(min(len(df), 40)):
         row_values = [str(x).strip() for x in df.iloc[i].values]
-        if any(re.search(r'代號|代碼|證券代號', x) for x in row_values):
+        # 針對元大「商品代碼」進行對齊
+        if any(re.search(r'代號|代碼|證券代號|商品代碼', x) for x in row_values):
             df.columns = row_values
             header_idx = i
             break
@@ -101,18 +104,17 @@ def clean_df_columns(df):
     for col in df.columns:
         c = str(col).strip()
         c_clean = re.sub(r'[^\w%]', '', c)
-        if any(x in c_clean for x in ['代號', '代碼', '證券代號']): new_cols[col] = '股票代號'
-        elif '名稱' in c_clean: new_cols[col] = '股票名稱'
-        elif any(x in c_clean for x in ['股數', '張數', '數量', '持股數']): new_cols[col] = '持股股數_純數字'
-        elif any(x in c_clean for x in ['權重', '比例']): new_cols[col] = '權重%'
-        elif any(x in c_clean for x in ['NAV', '淨資產', '基金規模', '價值']): new_cols[col] = '__NAV_VALUE'
+        if any(x in c_clean for x in ['代號', '代碼', '證券代號', '商品代碼']): new_cols[col] = '股票代號'
+        elif any(x in c_clean for x in ['名稱', '商品名稱']): new_cols[col] = '股票名稱'
+        elif any(x in c_clean for x in ['股數', '張數', '數量', '持股數', '商品數量']): new_cols[col] = '持股股數_純數字'
+        elif any(x in c_clean for x in ['權重', '比例', '商品權重']): new_cols[col] = '權重%'
     
     df = df.rename(columns=new_cols)
     
     # 4. 🧹 清洗資料
     if '股票代號' in df.columns:
         df['股票代號'] = df['股票代號'].astype(str).str.strip().str.replace('.0', '', regex=False)
-        df = df[df['股票代號'].str.contains(r'^\d+|_', na=False)]
+        df = df[df['股票代號'].str.contains(r'^\d+|_|[A-Z]', na=False)]
     
     if '持股股數_純數字' in df.columns:
         df['持股股數_純數字'] = pd.to_numeric(df['持股股數_純數字'].astype(str).str.replace(',', '').str.replace(' ', ''), errors='coerce').fillna(0)
@@ -120,20 +122,12 @@ def clean_df_columns(df):
     if '權重%' in df.columns:
         df['權重%'] = df['權重%'].astype(str).str.replace('%', '').str.strip()
 
-    # 5. 💰 淨值補全：如果 Metadata 有抓到就填入，否則找欄位
-    if fund_nav > 0:
-        df['__NAV_VALUE'] = fund_nav
-    elif '__NAV_VALUE' in df.columns:
-        nav_series = pd.to_numeric(df['__NAV_VALUE'].astype(str).str.replace(r'[^\d.]', '', regex=True), errors='coerce').fillna(0)
-        df['__NAV_VALUE'] = nav_series.max()
-    else:
-        df['__NAV_VALUE'] = 0.0
-
+    df['__NAV_VALUE'] = fund_nav
     return df
 
 def run_comparison(today_df, prev_filename):
     try:
-        df_prev = pd.read_csv(prev_filename, encoding='utf-8-sig') if prev_filename.endswith('.csv') else pd.read_excel(prev_filename)
+        df_prev = robust_read_file(prev_filename)
         df_prev = clean_df_columns(df_prev)
         today_df = clean_df_columns(today_df)
         
@@ -141,7 +135,8 @@ def run_comparison(today_df, prev_filename):
         p_nav = df_prev['__NAV_VALUE'].iloc[0] if not df_prev.empty else 0.0
         
         df_diff = pd.merge(today_df, df_prev[['股票代號', '持股股數_純數字']], on='股票代號', how='outer', suffixes=('', '_昨')).fillna(0)
-        df_stocks = df_diff[df_diff['股票代號'].str.match(r'^\d+$', na=False)].copy()
+        # 支援台股數字代號與美股英文代號
+        df_stocks = df_diff[df_diff['股票代號'].str.contains(r'^\d+|[A-Z]', na=False)].copy()
         
         df_stocks['昨張數'] = (df_stocks['持股股數_純數字_昨'] / 1000).round(2)
         df_stocks['今張數'] = (df_stocks['持股股數_純數字'] / 1000).round(2)
@@ -159,17 +154,15 @@ def render_manual_upload():
     st.header("📥 手動新增持股資料 (基地增援)")
     col1, col2 = st.columns(2)
     with col1:
-        selected_etf = st.selectbox("1. 選擇要存入的 ETF 標的：", ETF_LIST, index=ETF_LIST.index("00400A"))
-        upload_date = st.date_input("2. 選擇這份資料的日期：", datetime.now())
+        selected_etf = st.selectbox("1. 選擇標的：", ETF_LIST, index=ETF_LIST.index("00990A"))
+        upload_date = st.date_input("2. 選擇日期：", datetime.now())
     with col2:
-        uploaded_file = st.file_uploader("3. 請選擇 Excel 或 CSV 檔案", type=["xlsx", "csv", "xls"])
+        uploaded_file = st.file_uploader("3. 上傳檔案", type=["xlsx", "csv", "xls"])
     if uploaded_file is not None:
         file_ext = uploaded_file.name.split('.')[-1]
-        date_str = upload_date.strftime("%Y%m%d")
-        target_filename = f"holdings_{selected_etf}_{date_str}.{file_ext}"
-        with open(target_filename, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        st.success(f"✨ 報告主人！資料已成功入庫：`{target_filename}`")
+        target_filename = f"holdings_{selected_etf}_{upload_date.strftime('%Y%m%d')}.{file_ext}"
+        with open(target_filename, "wb") as f: f.write(uploaded_file.getbuffer())
+        st.success(f"✨ 成功入庫：`{target_filename}`")
         st.balloons()
 
 def render_gods_eye():
@@ -179,64 +172,51 @@ def render_gods_eye():
     
     all_changes = []
     for etf_code in ETF_LIST:
-        fs = [f for f in all_files if f.startswith(f'holdings_{etf_code}_')]
-        fs.sort(reverse=True)
+        fs = [f for f in all_files if f.startswith(f'holdings_{etf_code}_')]; fs.sort(reverse=True)
         today_f = next((f for f in fs if TODAY_STR in f), (fs[0] if fs else None))
         prev_f = next((f for f in fs if f != today_f), None)
         if today_f and prev_f:
             try:
-                df_today = pd.read_csv(today_f) if today_f.endswith('.csv') else pd.read_excel(today_f)
-                df_change, _, _ = run_comparison(df_today, prev_f)
-                if df_change is not None and not df_change.empty:
-                    all_changes.append(df_change[['股票代號', '股票名稱', '增減張數']])
+                df_today = robust_read_file(today_f); df_change, _, _ = run_comparison(df_today, prev_f)
+                if df_change is not None and not df_change.empty: all_changes.append(df_change[['股票代號', '股票名稱', '增減張數']])
             except: pass
-                
     if all_changes:
-        master_df = pd.concat(all_changes, ignore_index=True)
-        summary_df = master_df.groupby(['股票代號', '股票名稱'], as_index=False)['增減張數'].sum()
+        master_df = pd.concat(all_changes, ignore_index=True); summary_df = master_df.groupby(['股票代號', '股票名稱'], as_index=False)['增減張數'].sum()
         top_buys = summary_df[summary_df['增減張數'] > 0].sort_values(by='增減張數', ascending=False)
         top_sells = summary_df[summary_df['增減張數'] < 0].sort_values(by='增減張數', ascending=True)
         c1, c2 = st.columns(2)
-        with c1: st.subheader("🚀 買超總排行"); st.dataframe(top_buys, use_container_width=True, hide_index=True)
-        with c2: st.subheader("📉 賣超總排行"); st.dataframe(top_sells, use_container_width=True, hide_index=True)
+        with c1: st.subheader("🚀 買超排行"); st.dataframe(top_buys, use_container_width=True, hide_index=True)
+        with c2: st.subheader("📉 賣超排行"); st.dataframe(top_sells, use_container_width=True, hide_index=True)
 
 def render_etf_mode(etf_code):
-    info = ETF_INFO.get(etf_code, {})
-    st.header(f"📊 {etf_code} {info.get('名稱','')} 分析儀")
-    all_fs = [f for f in os.listdir() if (f.endswith('.csv') or f.endswith('.xlsx')) and f.startswith(f'holdings_{etf_code}_') and not f.startswith('~$')]
-    all_fs.sort(reverse=True)
+    info = ETF_INFO.get(etf_code, {}); st.header(f"📊 {etf_code} {info.get('名稱','')} 分析儀")
+    all_fs = [f for f in os.listdir() if (f.endswith('.csv') or f.endswith('.xlsx')) and f.startswith(f'holdings_{etf_code}_')]; all_fs.sort(reverse=True)
     today_f = next((f for f in all_fs if TODAY_STR in f), (all_fs[0] if all_fs else None))
     prev_f = next((f for f in all_fs if f != today_f), None)
-
     if today_f:
         try:
-            df_full = pd.read_csv(today_f) if today_f.endswith('.csv') else pd.read_excel(today_f)
-            df_full = clean_df_columns(df_full)
+            df_full = robust_read_file(today_f); df_full = clean_df_columns(df_full)
             if prev_f:
                 df_change, t_nav, p_nav = run_comparison(df_full, prev_f)
                 st.subheader("💰 基金總資產資金水位監控")
                 c1, c2, c3 = st.columns(3)
                 with c1: st.metric("今日總資金", f"{t_nav:,.0f} 元")
                 with c2: st.metric("近期總資金", f"{p_nav:,.0f} 元")
-                with c3:
-                    delta = t_nav - p_nav
-                    st.metric("資金水位增減", f"{delta:,.0f} 元", delta_color="normal", delta=f"{delta:,.0f}")
+                with c3: st.metric("資金增減", f"{(t_nav - p_nav):,.0f} 元", delta=(t_nav - p_nav))
                 if df_change is not None:
                     st.subheader("🔥 今日動開獎")
                     st.dataframe(df_change[['股票代號', '股票名稱', '昨張數', '今張數', '增減張數', '權重%']], use_container_width=True, hide_index=True)
-
-            st.subheader(f"📋 目前完整持股明細 ({today_f})")
+            st.subheader(f"📋 持股明細 ({today_f})")
             display_cols = [c for c in ['股票代號', '股票名稱', '持股股數_純數字', '權重%'] if c in df_full.columns]
             st.dataframe(df_full[display_cols], use_container_width=True, hide_index=True)
-        except Exception as e: st.error(f"🌸 小粉報告：發生錯誤：{e}")
-    else: st.warning("⚠️ 雲端尚無資料。")
+        except Exception as e: st.error(f"🌸 小粉報告：錯誤：{e}")
+    else: st.warning("⚠️ 尚無資料。")
 
 # ==========================================
 # 🌸 第五區：【導航中心】
 # ==========================================
 st.sidebar.header("📁 監控目錄")
 selected = st.sidebar.radio("請點擊目標：", ["🌟 全市場籌碼總匯", "📖 ETF 總覽清單", "📥 手動新增資料"] + ETF_LIST)
-
 if selected == "🌟 全市場籌碼總匯": render_gods_eye()
 elif selected == "📖 ETF 總覽清單": st.table(pd.DataFrame(ETF_INFO).T)
 elif selected == "📥 手動新增資料": render_manual_upload()
