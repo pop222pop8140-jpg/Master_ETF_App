@@ -42,13 +42,7 @@ st.markdown("""
     }
     [data-testid="stMetricValue"] { font-size: 45px !important; font-weight: bold; }
     [data-testid="stMetricLabel"] p { font-size: 24px !important; }
-    .capital-box {
-        background-color: #f8f9fa;
-        padding: 20px;
-        border-radius: 10px;
-        border-left: 5px solid #ff69b4;
-        margin-bottom: 20px;
-    }
+    .capital-box { background-color: #f8f9fa; padding: 20px; border-radius: 10px; border-left: 5px solid #ff69b4; margin-bottom: 20px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -58,29 +52,24 @@ st.title("🌸 主人的主動式 ETF 雙重監控基地")
 # 🌸 第三區：【核心邏輯：強健讀取與掃描】
 # ==========================================
 def robust_read_file(filename):
-    """🌸 小粉專屬強健讀取引擎：解決元大 CSV 格式不一報錯問題"""
     try:
         if filename.endswith('.csv'):
-            # 預設多欄位讀取，防止 Expected 1 fields 錯誤
             return pd.read_csv(filename, encoding='utf-8-sig', header=None, names=range(25), on_bad_lines='skip')
         else:
             return pd.read_excel(filename, header=None, names=range(25))
-    except:
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
 def clean_df_columns(df):
     if df.empty: return df
     df = df.fillna("")
     fund_nav = 0.0
     
-    # 1. 🔍 掃描 Metadata (在表格被切掉前，先找尋總資產)
+    # 1. 🔍 掃描 Metadata (尋找幾千萬以上的真實資產)
     for i in range(min(len(df), 40)):
         row_list = [str(x).strip() for x in df.iloc[i].values]
         for idx, val in enumerate(row_list):
             if any(k in val for k in ["基金淨資產價值", "基金資產淨值", "資產金額", "股票"]) and \
                not any(ex in val for ex in ["代號", "代碼", "名稱", "數量", "權重"]):
-                
-                # 檢查隔壁或下一列
                 potential_vals = []
                 if idx + 1 < len(row_list): potential_vals.append(row_list[idx+1])
                 if i + 1 < len(df): potential_vals.append(str(df.iloc[i+1, idx]))
@@ -90,9 +79,7 @@ def clean_df_columns(df):
                     if val_clean:
                         try:
                             f_val = float(val_clean)
-                            # 🌸 門檻機制：金額需大於一千萬，避免抓到 2330
-                            if f_val > 10000000:
-                                fund_nav = max(fund_nav, f_val)
+                            if f_val > 10000000: fund_nav = max(fund_nav, f_val)
                         except: pass
         if fund_nav > 0: break
 
@@ -101,12 +88,8 @@ def clean_df_columns(df):
     for i in range(min(len(df), 40)):
         row_values = [str(x).strip() for x in df.iloc[i].values]
         if any(re.search(r'代號|代碼|證券代號|商品代碼', x) for x in row_values):
-            df.columns = row_values
-            header_idx = i
-            break
-    
-    if header_idx != -1:
-        df = df.iloc[header_idx+1:].reset_index(drop=True)
+            df.columns = row_values; header_idx = i; break
+    if header_idx != -1: df = df.iloc[header_idx+1:].reset_index(drop=True)
     
     # 3. 🏷️ 欄位重新對應
     new_cols = {}
@@ -119,14 +102,11 @@ def clean_df_columns(df):
         elif any(x in c_clean for x in ['權重', '比例', '商品權重']): new_cols[col] = '權重%'
     
     df = df.rename(columns=new_cols)
-    
     if '股票代號' in df.columns:
         df['股票代號'] = df['股票代號'].astype(str).str.strip().str.replace('.0', '', regex=False)
         df = df[df['股票代號'].str.contains(r'^\d+|_|[A-Z]', na=False)]
-    
     if '持股股數_純數字' in df.columns:
         df['持股股數_純數字'] = pd.to_numeric(df['持股股數_純數字'].astype(str).str.replace(',', '').str.replace(' ', ''), errors='coerce').fillna(0)
-    
     if '權重%' in df.columns:
         df['權重%'] = df['權重%'].astype(str).str.replace('%', '').str.strip()
 
@@ -135,9 +115,7 @@ def clean_df_columns(df):
 
 def run_comparison(today_df, prev_filename):
     try:
-        df_prev = robust_read_file(prev_filename)
-        df_prev = clean_df_columns(df_prev)
-        today_df = clean_df_columns(today_df)
+        df_prev = robust_read_file(prev_filename); df_prev = clean_df_columns(df_prev); today_df = clean_df_columns(today_df)
         t_nav = today_df['__NAV_VALUE'].iloc[0] if not today_df.empty else 0.0
         p_nav = df_prev['__NAV_VALUE'].iloc[0] if not df_prev.empty else 0.0
         df_diff = pd.merge(today_df, df_prev[['股票代號', '持股股數_純數字']], on='股票代號', how='outer', suffixes=('', '_昨')).fillna(0)
@@ -147,8 +125,7 @@ def run_comparison(today_df, prev_filename):
         df_stocks['增減張數'] = (df_stocks['今張數'] - df_stocks['昨張數']).round(2)
         df_change = df_stocks[df_stocks['增減張數'] != 0].sort_values(by='增減張數', ascending=False)
         return df_change, t_nav, p_nav
-    except:
-        return None, 0.0, 0.0
+    except: return None, 0.0, 0.0
 
 # ==========================================
 # 🌸 第四區：【渲染頁面】
@@ -201,13 +178,16 @@ def render_etf_mode(etf_code):
                 df_change, t_nav, p_nav = run_comparison(df_full, prev_f)
                 st.subheader("💰 基金總資產資金水位監控")
                 c1, c2, c3 = st.columns(3)
-                txt_t = f"{t_nav:,.0f} 元" if t_nav > 0 else "資料未包含總額"
-                txt_p = f"{p_nav:,.0f} 元" if p_nav > 0 else "資料未包含總額"
+                
+                # ✨ 這裡！小粉幫主人把沒有資金的介面美化了！
+                txt_t = f"{t_nav:,.0f} 元" if t_nav > 0 else "API 未提供"
+                txt_p = f"{p_nav:,.0f} 元" if p_nav > 0 else "API 未提供"
                 with c1: st.metric("今日總資金", txt_t)
                 with c2: st.metric("近期總資金", txt_p)
                 with c3:
                     if t_nav > 0 and p_nav > 0: st.metric("資金水位增減", f"{(t_nav - p_nav):,.0f} 元", delta=(t_nav - p_nav))
-                    else: st.metric("資金水位增減", "--")
+                    else: st.metric("資金水位增減", "無對比資料")
+                
                 if df_change is not None:
                     st.subheader("🔥 今日動開獎")
                     st.dataframe(df_change[['股票代號', '股票名稱', '昨張數', '今張數', '增減張數', '權重%']], use_container_width=True, hide_index=True)
